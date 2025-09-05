@@ -1,0 +1,57 @@
+name: tpex-daily
+
+on:
+  schedule:
+    - cron: "10 8 * * 1-5"   # 08:10 UTC = 台北 16:10，週一到週五
+  workflow_dispatch:
+
+permissions:
+  contents: write  # 允許推回 repo（用 GITHUB_TOKEN）
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Taipei
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}  # 可選
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install requests
+
+      - name: Fetch TPEX (buy)
+        run: python tpex_insti_daily.py --side buy --date "" --out tpex_buy.csv
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tpex-buy-latest
+          path: tpex_buy.csv
+          if-no-files-found: warn
+
+      - name: Commit CSV back (if changed)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet -- tpex_buy.csv; then
+            git add tpex_buy.csv
+            git commit -m "chore: update tpex_buy.csv ($(date -u +'%Y-%m-%d'))"
+            git push
+          else
+            echo "No changes to commit."
+          fi
+
+      - name: Notify Slack (optional)
+        if: ${{ env.SLACK_WEBHOOK_URL != '' }}
+        run: |
+          MSG="$(date +'%F %T %Z') 抓取完成：$(wc -l < tpex_buy.csv) 行（含表頭）。"
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"$MSG\"}" \
+            "$SLACK_WEBHOOK_URL"
