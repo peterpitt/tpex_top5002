@@ -1,57 +1,44 @@
-name: tpex-daily
+name: TPEx Daily + 5m×300 to Slack
 
 on:
   schedule:
-    - cron: "10 8 * * 1-5"   # 08:10 UTC = 台北 16:10，週一到週五
+    - cron: "5 14 * * 1-6"   # TW 22:05, Mon-Sat
   workflow_dispatch:
 
-permissions:
-  contents: write  # 允許推回 repo（用 GITHUB_TOKEN）
-
 jobs:
-  run:
+  run-and-report:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
-      TZ: Asia/Taipei
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}  # 可選
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-
-      - name: Install deps
-        run: pip install requests
-
-      - name: Fetch TPEX (buy)
-        run: python tpex_insti_daily.py --side buy --date "" --out tpex_buy.csv
-
-      - name: Upload artifact
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Generate TPEx CSV (buy)
+        run: |
+          mkdir -p out
+          python tpex_insti_daily.py --side buy --date "" --out out/tpex_buy.csv
+      - name: Generate TPEx CSV (sell)
+        run: |
+          python tpex_insti_daily.py --side sell --date "" --out out/tpex_sell.csv
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: tpex-buy-latest
-          path: tpex_buy.csv
+          name: tpex-daily-csv
+          path: out/*.csv
           if-no-files-found: warn
-
-      - name: Commit CSV back (if changed)
+          retention-days: 14
+      - name: Send Top5 5m×300 to Slack
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if ! git diff --quiet -- tpex_buy.csv; then
-            git add tpex_buy.csv
-            git commit -m "chore: update tpex_buy.csv ($(date -u +'%Y-%m-%d'))"
-            git push
+          if [ -z "${SLACK_WEBHOOK_URL}" ]; then
+            echo "No SLACK_WEBHOOK_URL provided; skipping Slack send."
           else
-            echo "No changes to commit."
+            python tpex_top5_5m_slack.py --days 15 --window 300 --strength 0.01 --r2 0.10
           fi
-
-      - name: Notify Slack (optional)
-        if: ${{ env.SLACK_WEBHOOK_URL != '' }}
-        run: |
-          MSG="$(date +'%F %T %Z') 抓取完成：$(wc -l < tpex_buy.csv) 行（含表頭）。"
-          curl -X POST -H 'Content-type: application/json' \
-            --data "{\"text\":\"$MSG\"}" \
-            "$SLACK_WEBHOOK_URL"
