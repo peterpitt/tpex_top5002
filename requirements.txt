@@ -1,0 +1,5 @@
+yfinance
+pandas
+numpy
+requests
+urllib3>=1.26
